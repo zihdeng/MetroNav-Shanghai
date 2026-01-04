@@ -1,0 +1,27 @@
+# === Python 缓存与运行环境 ===
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# === 数据库与大型备份 ===
+# *.sql
+# 排除具体的数据库设计文档备份
+
+# === IDE 与 系统临时文件 ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# === 爬虫与日志文件 ===
+# 排除爬虫可能产生的临时数据
+*.log
+crawler_data/
+
+# === 前端临时文件 ===
+# 如果后续使用 npm，这行非常重要
+node_modules/
+dist/

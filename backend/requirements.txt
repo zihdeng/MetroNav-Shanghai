@@ -1,0 +1,12 @@
+# Web 框架与跨域处理
+Flask==3.0.0
+flask-cors==4.0.0
+
+# 数据库连接
+PyMySQL==1.1.0
+
+# 网络请求（爬虫使用）
+requests==2.31.0
+
+# 常用数学与逻辑处理
+cryptography  # PyMySQL 连接某些 MySQL 版本时需要

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetroNav Shanghai - 轨道交通最优路径规划</title>
+    
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus/dist/index.full.js"></script>
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: "PingFang SC", Arial, sans-serif; overflow: hidden; }
+        #app { width: 100%; height: 100%; position: relative; }
+        #map-container { width: 100%; height: 100%; z-index: 1; background-color: #f5f5f5; }
+        .leaflet-left { left: 420px; }
+
+        .sidebar-panel {
+            position: absolute; top: 20px; left: 20px; width: 380px; max-height: 90vh;
+            background: #ffffff; border-radius: 8px; box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.15);
+            display: flex; flex-direction: column; z-index: 1000; overflow: hidden;
+        }
+
+        .panel-header { background-color: #3385ff; color: white; padding: 15px 20px 0; }
+        .app-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+        .tabs { display: flex; }
+        .tab-item { padding: 10px 0; margin-right: 20px; cursor: pointer; font-size: 14px; opacity: 0.8; border-bottom: 3px solid transparent; }
+        .tab-item.active { opacity: 1; font-weight: bold; border-bottom: 3px solid white; }
+
+        .panel-body { padding: 20px; overflow-y: auto; flex: 1; }
+        .input-row { display: flex; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 12px; flex-shrink: 0; }
+        .dot.start { background: #09b068; }
+        .dot.end { background: #ee3f4d; }
+        .search-btn { width: 100%; height: 44px; border-radius: 22px; font-size: 16px; margin-top: 10px; }
+
+        .result-card { margin-top: 25px; animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .result-summary { display: flex; align-items: baseline; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed #eee; }
+        .duration { font-size: 24px; font-weight: bold; color: #333; margin-right: 10px; }
+        .route-timeline { position: relative; padding-left: 15px; }
+        .route-step { position: relative; padding-left: 25px; padding-bottom: 25px; border-left: 2px solid #e4e7ed; }
+        .route-step:last-child { border-left: 2px solid transparent; }
+        .step-icon { position: absolute; left: -6px; top: 0; width: 10px; height: 10px; background: #fff; border: 2px solid #3385ff; border-radius: 50%; }
+        .step-name { font-size: 15px; font-weight: 500; }
+        .step-meta { margin-top: 6px; font-size: 12px; color: #909399; }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <div id="map-container"></div>
+
+        <div class="sidebar-panel">
+            <div class="panel-header">
+                <div class="app-title"><el-icon><Map-Location /></el-icon> 上海地铁出行规划</div>
+                <div class="tabs">
+                    <div class="tab-item" :class="{active: currentTab==='route'}" @click="currentTab='route'">路径规划</div>
+                    <div class="tab-item" :class="{active: currentTab==='stats'}" @click="fetchStats">数据统计</div>
+                </div>
+            </div>
+
+            <div class="panel-body" v-if="currentTab === 'route'">
+                <div class="input-row">
+                    <div class="dot start"></div>
+                    <el-select v-model="startStationId" filterable placeholder="选择起点站" style="width: 100%">
+                        <el-option v-for="item in stations" :key="item.station_id" :label="item.station_name" :value="item.station_id"></el-option>
+                    </el-select>
+                </div>
+                <div class="input-row">
+                    <div class="dot end"></div>
+                    <el-select v-model="endStationId" filterable placeholder="选择终点站" style="width: 100%">
+                        <el-option v-for="item in stations" :key="item.station_id" :label="item.station_name" :value="item.station_id"></el-option>
+                    </el-select>
+                </div>
+
+                <el-button type="primary" class="search-btn" :loading="loading" @click="handleSearch" round>
+                    {{ loading ? '计算中...' : '开始规划路线' }}
+                </el-button>
+
+                <div class="result-card" v-if="result">
+                    <div class="result-summary">
+                        <span class="duration">{{ result.estimated_time }} 分钟</span>
+                        <span class="fare">{{ result.total_stations }} 站 | 推荐方案</span>
+                    </div>
+                    <div class="route-timeline">
+                        <div class="route-step" v-for="(node, idx) in result.path" :key="idx">
+                            <div class="step-icon" :style="idx === 0 || idx === result.path.length-1 ? 'border-color: #ee3f4d' : ''"></div>
+                            <div class="step-name">{{ node.station_name }}</div>
+                            <div class="step-meta" v-if="node.line_name">
+                                <el-tag size="small" effect="dark">{{ node.line_name }}</el-tag>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-body" v-else-if="currentTab === 'stats'">
+                <el-skeleton :rows="3" animated v-if="!stats"></el-skeleton>
+                <div v-else>
+                    <el-row :gutter="20">
+                        <el-col :span="12">
+                            <el-statistic title="收录线路" :value="stats.lineCount || 0" />
+                        </el-col>
+                        <el-col :span="12">
+                            <el-statistic title="覆盖站点" :value="stats.stationCount || 0" />
+                        </el-col>
+                    </el-row>
+                    <el-divider></el-divider>
+                    <div style="padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                        <p style="margin: 0; font-size: 14px; color: #606266;">
+                            最繁忙换乘枢纽：<b style="color: #409EFF; font-size: 16px;">{{ stats.busyStation }}</b>
+                        </p>
+                        <p style="margin: 5px 0 0 0; font-size: 12px; color: #909399;" v-if="stats.busyStationLines">
+                            (该站连接了 {{ stats.busyStationLines }} 条地铁线路)
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div> </div> <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        const app = createApp({
+            setup() {
+                const currentTab = ref('route');
+                const startStationId = ref('');
+                const endStationId = ref('');
+                const loading = ref(false);
+                const result = ref(null);
+                const stations = ref([]);
+                const stats = ref(null);
+                
+                let map = null;
+                let markersLayer = null;
+                let routeLayer = null;
+
+                const API_BASE = 'http://127.0.0.1:8000/api'; 
+
+                const initMap = () => {
+                    map = L.map('map-container', { zoomControl: false }).setView([31.2304, 121.4737], 11);
+                    L.control.zoom({ position: 'bottomright' }).addTo(map);
+                    
+                    L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+                        subdomains: ['1', '2', '3', '4'],
+                        attribution: '&copy; 高德地图'
+                    }).addTo(map);
+
+                    markersLayer = L.layerGroup().addTo(map);
+                    routeLayer = L.layerGroup().addTo(map);
+                };
+
+                const fetchStations = async () => {
+                    try {
+                        const res = await axios.get(`${API_BASE}/stations`);
+                        stations.value = res.data;
+                        stations.value.forEach(s => {
+                            L.circleMarker([s.lat, s.lng], {
+                                color: '#3385ff', fillColor: '#fff', fillOpacity: 1, radius: 4, weight: 1
+                            }).addTo(markersLayer).bindPopup(`<b>${s.station_name}</b>`);
+                        });
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('无法连接后端数据库');
+                    }
+                };
+
+                const fetchStats = async () => {
+                    currentTab.value = 'stats';
+                    try {
+                        const res = await axios.get(`${API_BASE}/stats`);
+                        stats.value = res.data;
+                    } catch (e) {
+                        console.error("统计获取失败", e);
+                    }
+                };
+
+                const handleSearch = async () => {
+                    if (!startStationId.value || !endStationId.value) {
+                        ElementPlus.ElMessage.warning('请选择起点和终点');
+                        return;
+                    }
+                    loading.value = true;
+                    routeLayer.clearLayers();
+
+                    try {
+                        const res = await axios.post(`${API_BASE}/route`, {
+                            start_station_id: startStationId.value,
+                            end_station_id: endStationId.value
+                        });
+                        result.value = res.data;
+
+                        const latlngs = result.value.path.map(node => [node.lat, node.lng]);
+                        const polyline = L.polyline(latlngs, {
+                            color: '#09b068', weight: 6, opacity: 0.8, lineJoin: 'round'
+                        }).addTo(routeLayer);
+
+                        L.marker(latlngs[0]).addTo(routeLayer).bindPopup("起点").openPopup();
+                        L.marker(latlngs[latlngs.length - 1]).addTo(routeLayer).bindPopup("终点");
+
+                        map.fitBounds(polyline.getBounds(), { padding: [100, 100] });
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('路径计算失败');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    initMap();
+                    fetchStations();
+                });
+
+                return { currentTab, startStationId, endStationId, loading, result, stations, stats, handleSearch, fetchStats };
+            }
+        });
+
+        // 注册图标并挂载
+        for (const [key, component] of Object.entries(ElementPlusIconsVue)) { 
+            app.component(key, component) 
+        }
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>
